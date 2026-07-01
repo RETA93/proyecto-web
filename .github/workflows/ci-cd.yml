@@ -69,8 +69,8 @@ jobs:
           TARGET_HOST: ${{ secrets.SERVER_HOST }}
           TARGET_USER: ${{ secrets.SERVER_USER }}
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 "$TARGET_USER@$TARGET_HOST" << EOF
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 "$TARGET_USER@$TARGET_HOST" << 'EOF'
             cd /home/reta/proyecto-web
             git pull origin ${{ github.ref_name }}
-            docker compose -f docker-compose.yml -f docker-compose.${{ templates.env.outputs.name }}.yml \n              --env-file .env.${{ steps.env.outputs.name }} up -d --build
+            docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml \n              --env-file .env.${{ steps.env.outputs.name }} up -d --build
           EOF
