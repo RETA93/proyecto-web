@@ -34,6 +34,8 @@ jobs:
   deploy:
     needs: [test-python, test-go]
     runs-on: ubuntu-latest
+    # Vinculamos dinámicamente el job al entorno protegido de GitHub
+    environment: ${{ github.ref_name == 'main' && 'prod' || (github.ref_name == 'qa' && 'qa' || 'dev') }}
     steps:
       - uses: actions/checkout@v4
 
