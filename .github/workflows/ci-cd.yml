@@ -49,6 +49,8 @@ jobs:
           fi
 
       - name: Configurar Cloudflare Tunnel y SSH
+        env:
+          TARGET_HOST: ${{ secrets.SERVER_HOST }}
         run: |
           sudo mkdir -p /usr/local/bin
           sudo curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
@@ -58,14 +60,17 @@ jobs:
           echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           
-          echo "Host ${{ secrets.SERVER_HOST }}" >> ~/.ssh/config
+          echo "Host $TARGET_HOST" >> ~/.ssh/config
           echo "  ProxyCommand /usr/local/bin/cloudflared access ssh --hostname %h" >> ~/.ssh/config
           echo "  StrictHostKeyChecking no" >> ~/.ssh/config
 
       - name: Desplegar por SSH Nativo
+        env:
+          TARGET_HOST: ${{ secrets.SERVER_HOST }}
+          TARGET_USER: ${{ secrets.SERVER_USER }}
         run: |
-          ssh -i ~/.ssh/id_ed25519 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << EOF
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 "$TARGET_USER@$TARGET_HOST" << EOF
             cd /home/reta/proyecto-web
             git pull origin ${{ github.ref_name }}
-            docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml \n              --env-file .env.${{ steps.env.outputs.name }} up -d --build
+            docker compose -f docker-compose.yml -f docker-compose.${{ templates.env.outputs.name }}.yml \n              --env-file .env.${{ steps.env.outputs.name }} up -d --build
           EOF
