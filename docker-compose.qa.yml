@@ -1,0 +1,9 @@
+version: "3.9"
+
+services:
+  backend-python:
+    command: ["gunicorn", "main:app", "-w", "2", "-b", "0.0.0.0:8000"]
+
+  nginx:
+    ports:
+      - "8091:80"

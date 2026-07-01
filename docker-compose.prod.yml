@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  backend-python:
+    command: ["gunicorn", "main:app", "-w", "4", "-b", "0.0.0.0:8000"]
+    restart: always
+
+  backend-go:
+    restart: always
+
+  frontend:
+    restart: always
+
+  nginx:
+    restart: always
+    ports:
+      - "8092:80"

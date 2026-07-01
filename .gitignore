@@ -1,0 +1,10 @@
+.env
+.env.dev
+.env.qa
+.env.prod
+node_modules/
+__pycache__/
+*.pyc
+dist/
+mysql-data/
+.DS_Store

@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  mysql:
+    ports:
+      - "3306:3306"
+
+  backend-python:
+    volumes:
+      - ./backend-python:/app
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    ports:
+      - "8000:8000"
+
+  backend-go:
+    build:
+      context: ./backend-go
+      target: builder
+    volumes:
+      - ./backend-go:/app
+    command: go run main.go
+    ports:
+      - "8080:8080"
+
+  frontend:
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+    ports:
+      - "5173:5173"
+
+  nginx:
+    ports:
+      - "8090:80"
