@@ -57,5 +57,4 @@ jobs:
           script: |
             cd /home/reta/proyecto-web
             git pull origin ${{ github.ref_name }}
-            docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml \
-              --env-file .env.${{ steps.env.outputs.name }} up -d --build
+            docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml \n              --env-file .env.${{ steps.env.outputs.name }} up -d --build
