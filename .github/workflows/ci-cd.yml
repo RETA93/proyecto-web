@@ -81,13 +81,13 @@ jobs:
             
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} down --remove-orphans
             
-            # Levantar primero mysql de forma aislada
-            docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ secrets.env.outputs.name }} up -d mysql
+            # Levantar primero mysql leyendo BIEN el archivo .env
+            docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d mysql
             
-            # Esperar de forma inteligente a que mysql pase su healthcheck exitosamente
+            # Esperar a que mysql esté saludable
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} wait mysql
             
-            # Una vez que mysql está sano, levantar todo lo demás
+            # Levantar el resto de los servicios
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d --build
           EOF
 
