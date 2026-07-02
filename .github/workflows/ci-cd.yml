@@ -76,10 +76,16 @@ jobs:
             git reset --hard origin/${{ github.ref_name }}
             git pull origin ${{ github.ref_name }}
             
-            # Forzar el borrado de contenedores viejos conflictivos por nombre directo antes del up
+            # Limpieza forzada de contenedores huérfanos anteriores
             docker rm -f frontend-dev backend-python-dev backend-go-dev nginx-dev mysql-dev frontend-qa backend-python-qa backend-go-qa nginx-qa mysql-qa 2>/dev/null || true
             
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} down --remove-orphans
+            
+            # Levantar primero la base de datos de forma aislada y esperar 15 segundos a que el healthcheck estabilice
+            docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d mysql
+            sleep 15
+            
+            # Levantar todo el ecosistema completo
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d --build
           EOF
 
