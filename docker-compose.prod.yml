@@ -1,17 +1,22 @@
 version: "3.9"
 
 services:
+  mysql:
+    ports:
+      - "3308:3306"
+
   backend-python:
-    command: ["gunicorn", "main:app", "-w", "4", "-b", "0.0.0.0:8000"]
-    restart: always
+    ports:
+      - "8002:8000"
 
   backend-go:
-    restart: always
+    ports:
+      - "8082:8080"
 
   frontend:
-    restart: always
+    ports:
+      - "5175:5173"
 
   nginx:
-    restart: always
     ports:
-      - "8092:80"
+      - "8090:80"
