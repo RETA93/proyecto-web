@@ -75,6 +75,10 @@ jobs:
             git config pull.rebase false
             git reset --hard origin/${{ github.ref_name }}
             git pull origin ${{ github.ref_name }}
+            
+            # Forzar el borrado de contenedores viejos conflictivos por nombre directo antes del up
+            docker rm -f frontend-dev backend-python-dev backend-go-dev nginx-dev mysql-dev frontend-qa backend-python-qa backend-go-qa nginx-qa mysql-qa 2>/dev/null || true
+            
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} down --remove-orphans
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d --build
           EOF
