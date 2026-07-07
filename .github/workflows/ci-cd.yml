@@ -5,49 +5,57 @@ on:
     branches: [develop, qa, main]
 
 jobs:
-  test-python:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # --- OPTIMIZACIÓN PYTHON + CACHÉ ---
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Instalar dependencias
+          cache: 'pip' # Almacena en caché los paquetes descargados
+          cache-dependency-path: backend-python/requirements.txt
+      - name: Instalar dependencias Python
         run: pip install -r backend-python/requirements.txt
-      - name: Ejecutar tests
+      - name: Ejecutar tests Python
         run: |
           cd backend-python
           python -m pytest || echo "Sin tests todavía"
 
-  test-go:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      # --- OPTIMIZACIÓN GO + CACHÉ ---
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23"
-      - name: Ejecutar tests
+          cache: true # Habilita la caché nativa de módulos y compilación de Go
+          cache-dependency-path: backend-go/go.sum
+      - name: Ejecutar tests Go
         run: |
           cd backend-go
           go test ./... || echo "Sin tests todavía"
 
-  deploy:
-    needs: [test-python, test-go]
+  deploy-and-promote:
+    needs: test
     runs-on: ubuntu-latest
-    # Vinculamos dinámicamente el job al entorno protegido de GitHub
     environment: ${{ github.ref_name == 'main' && 'prod' || (github.ref_name == 'qa' && 'qa' || 'dev') }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Determinar entorno según la rama
+      - name: Determinar entorno
         id: env
         run: |
           if [ "${{ github.ref_name }}" = "main" ]; then
             echo "name=prod" >> "$GITHUB_OUTPUT"
+            echo "dir=proyecto-web-prod" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.ref_name }}" = "qa" ]; then
             echo "name=qa" >> "$GITHUB_OUTPUT"
+            echo "dir=proyecto-web-qa" >> "$GITHUB_OUTPUT"
           else
             echo "name=dev" >> "$GITHUB_OUTPUT"
+            echo "dir=proyecto-web" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Configurar Cloudflare Tunnel y SSH
@@ -55,26 +63,64 @@ jobs:
           sudo mkdir -p /usr/local/bin
           sudo curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
           sudo chmod +x /usr/local/bin/cloudflared
-          
           mkdir -p ~/.ssh
           echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          
           REAL_HOST=$(echo "${{ secrets.SERVER_HOST }}" | base64 --decode 2>/dev/null || echo "${{ secrets.SERVER_HOST }}")
-          
           echo "Host $REAL_HOST" >> ~/.ssh/config
           echo "  ProxyCommand /usr/local/bin/cloudflared access ssh --hostname %h" >> ~/.ssh/config
           echo "  StrictHostKeyChecking no" >> ~/.ssh/config
-          
           echo "$REAL_HOST" > ~/.ssh/target_host_clean
 
-      - name: Desplegar por SSH Nativo
+      - name: Desplegar en Servidor Local por SSH
         env:
           TARGET_USER: ${{ secrets.SERVER_USER }}
         run: |
           TARGET_HOST=$(cat ~/.ssh/target_host_clean)
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 "$TARGET_USER@$TARGET_HOST" << 'EOF'
-            cd /home/reta/proyecto-web
+            cd /home/reta/${{ steps.env.outputs.dir }}
+            git config pull.rebase false
+            git reset --hard origin/${{ github.ref_name }}
             git pull origin ${{ github.ref_name }}
+            
+            # Limpieza forzada de contenedores huérfanos anteriores
+            docker rm -f frontend-dev backend-python-dev backend-go-dev nginx-dev mysql-dev frontend-qa backend-python-qa backend-go-qa nginx-qa mysql-qa 2>/dev/null || true
+            
+            # Apagar el entorno actual limpiando huérfanos
+            docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} down --remove-orphans
+            
+            # Levantar únicamente mysql
+            docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d mysql
+            
+            # CORRECCIÓN DE WAIT: Bucle dinámico que espera hasta que el healthcheck sea realmente 'healthy'
+            echo "Esperando a que MySQL inicie de forma saludable..."
+            for i in {1..30}; do
+              STATUS=$(docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml ps mysql --format json | grep -o '"HealthStatus":"[^"]*"' | cut -d'"' -f4)
+              if [ "$STATUS" = "healthy" ]; then
+                echo "¡MySQL está listo y saludable!"
+                break
+              fi
+              echo "Atenuando... MySQL sigue cargando (Intento $i/30)"
+              sleep 3
+            done
+            
+            # Levantar el resto de los servicios compilando cambios
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d --build
           EOF
+
+      - name: Promocionar Rama Automaticamente (Merge)
+        if: success() && (github.ref_name == 'develop' || github.ref_name == 'qa')
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          if [ "${{ github.ref_name }}" = "develop" ]; then
+            TARGET_BRANCH="qa"
+          elif [ "${{ github.ref_name }}" = "qa" ]; then
+            TARGET_BRANCH="main"
+          fi
+          
+          echo "Haciendo merge automático de ${{ github.ref_name }} hacia $TARGET_BRANCH..."
+          git checkout $TARGET_BRANCH
+          git merge origin/${{ github.ref_name }} --no-ff -m "ci: merge automático de promocion desde ${{ github.ref_name }}"
+          git push origin $TARGET_BRANCH

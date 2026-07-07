@@ -22,10 +22,12 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      # Usamos la variable de entorno para autenticar de forma dinámica y segura
+      test: ["CMD", "mysqladmin", "ping", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 40s # Tiempo de gracia crucial para recuperaciones tras apagones
 
   backend-python:
     build:
