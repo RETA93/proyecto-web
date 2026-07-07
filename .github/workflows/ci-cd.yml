@@ -9,9 +9,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # --- OPTIMIZACIÓN PYTHON + CACHÉ ---
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: 'pip' # Almacena en caché los paquetes descargados
+          cache-dependency-path: backend-python/requirements.txt
       - name: Instalar dependencias Python
         run: pip install -r backend-python/requirements.txt
       - name: Ejecutar tests Python
@@ -19,9 +23,12 @@ jobs:
           cd backend-python
           python -m pytest || echo "Sin tests todavía"
 
+      # --- OPTIMIZACIÓN GO + CACHÉ ---
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23"
+          cache: true # Habilita la caché nativa de módulos y compilación de Go
+          cache-dependency-path: backend-go/go.sum
       - name: Ejecutar tests Go
         run: |
           cd backend-go
@@ -79,15 +86,25 @@ jobs:
             # Limpieza forzada de contenedores huérfanos anteriores
             docker rm -f frontend-dev backend-python-dev backend-go-dev nginx-dev mysql-dev frontend-qa backend-python-qa backend-go-qa nginx-qa mysql-qa 2>/dev/null || true
             
+            # Apagar el entorno actual limpiando huérfanos
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} down --remove-orphans
             
-            # Levantar primero mysql leyendo BIEN el archivo .env
+            # Levantar únicamente mysql
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d mysql
             
-            # Esperar a que mysql esté saludable
-            docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} wait mysql
+            # CORRECCIÓN DE WAIT: Bucle dinámico que espera hasta que el healthcheck sea realmente 'healthy'
+            echo "Esperando a que MySQL inicie de forma saludable..."
+            for i in {1..30}; do
+              STATUS=$(docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml ps mysql --format json | grep -o '"HealthStatus":"[^"]*"' | cut -d'"' -f4)
+              if [ "$STATUS" = "healthy" ]; then
+                echo "¡MySQL está listo y saludable!"
+                break
+              fi
+              echo "Atenuando... MySQL sigue cargando (Intento $i/30)"
+              sleep 3
+            done
             
-            # Levantar el resto de los servicios
+            # Levantar el resto de los servicios compilando cambios
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d --build
           EOF
 
