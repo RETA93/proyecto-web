@@ -74,12 +74,25 @@ jobs:
         run: |
           TARGET_HOST=$(cat ~/.ssh/target_host_clean)
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -i ~/.ssh/id_ed25519 "$TARGET_USER@$TARGET_HOST" << 'EOF'
+            # 1. Moverse a la carpeta dinámica calculada por GitHub Actions
             cd /home/reta/${{ steps.env.outputs.dir }}
+            
+            # 2. Si la carpeta está vacía (como pasa en QA o Prod la primera vez), clonar el repositorio
+            if [ ! -d ".git" ]; then
+              echo "Carpeta vacía, clonando repositorio por primera vez..."
+              cd ..
+              git clone https://github.com/RETA93/proyecto-web.git ${{ steps.env.outputs.dir }}
+              cd ${{ steps.env.outputs.dir }}
+            fi
+            
+            # 3. Traer los cambios limpios de la rama correspondiente
             git config pull.rebase false
+            git fetch origin
+            git checkout ${{ github.ref_name }}
             git reset --hard origin/${{ github.ref_name }}
             git pull origin ${{ github.ref_name }}
             
-            # Detener y reconstruir el entorno específico
+            # 4. Detener y reconstruir el entorno específico
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} down --remove-orphans
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d mysql
             sleep 20
