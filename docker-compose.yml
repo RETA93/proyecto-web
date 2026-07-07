@@ -13,20 +13,21 @@ services:
     container_name: mysql-${ENV_NAME:-dev}
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: dev4264612a
-      MYSQL_DATABASE: dev
-      MYSQL_USER: reta
-      MYSQL_PASSWORD: retadev4264612a
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
       - mysql-data:/var/lib/mysql
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-pdev4264612a"] # <--- Cambiado aquí también por seguridad del comando
+      # Usamos la variable de entorno para autenticar de forma dinámica y segura
+      test: ["CMD", "mysqladmin", "ping", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 40s
+      start_period: 40s # Tiempo de gracia crucial para recuperaciones tras apagones
 
   backend-python:
     build:
@@ -34,7 +35,7 @@ services:
     container_name: backend-python-${ENV_NAME:-dev}
     restart: unless-stopped
     environment:
-      - DATABASE_URL=mysql://reta:retadev4264612a@mysql:3306/dev # <--- Credenciales fijas
+      - DATABASE_URL=mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
       - ENV=${ENV_NAME:-dev}
     depends_on:
       mysql:
@@ -48,7 +49,7 @@ services:
     container_name: backend-go-${ENV_NAME:-dev}
     restart: unless-stopped
     environment:
-      - DB_DSN=reta:retadev4264612a@tcp(mysql:3306)/dev # <--- Credenciales fijas
+      - DB_DSN=${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(mysql:3306)/${MYSQL_DATABASE}
       - ENV=${ENV_NAME:-dev}
     depends_on:
       mysql:
