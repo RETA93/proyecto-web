@@ -35,12 +35,11 @@ jobs:
   deploy:
     needs: test
     runs-on: ubuntu-latest
-    # Mapea dinámicamente los entornos oficiales de GitHub
-    environment: ${{ github.ref_name == 'main' && 'prod' || (github.ref_name == 'qa' && 'qa' || 'dev') }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Determinar carpeta de destino
+      # Definimos las variables de entorno de manera robusta y explícita en Bash
+      - name: Configurar Variables de Entorno según la Rama
         id: env
         run: |
           if [ "${{ github.ref_name }}" = "main" ]; then
@@ -49,9 +48,6 @@ jobs:
           elif [ "${{ github.ref_name }}" = "qa" ]; then
             echo "name=qa" >> "$GITHUB_OUTPUT"
             echo "dir=proyecto-web-qa" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.ref_name }}" = "develop" ]; then
-            echo "name=dev" >> "$GITHUB_OUTPUT"
-            echo "dir=proyecto-web" >> "$GITHUB_OUTPUT"
           else
             echo "name=dev" >> "$GITHUB_OUTPUT"
             echo "dir=proyecto-web" >> "$GITHUB_OUTPUT"
@@ -71,33 +67,33 @@ jobs:
           echo "  StrictHostKeyChecking no" >> ~/.ssh/config
           echo "$REAL_HOST" > ~/.ssh/target_host_clean
 
-      - name: Desplegar por SSH según la rama activa
+      - name: Desplegar por SSH en el Servidor Local
         env:
           TARGET_USER: ${{ secrets.SERVER_USER }}
         run: |
           TARGET_HOST=$(cat ~/.ssh/target_host_clean)
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -i ~/.ssh/id_ed25519 "$TARGET_USER@$TARGET_HOST" << 'EOF'
-            # 1. Crear la carpeta si no existe y moverse a ella
+            # Crear la carpeta de entorno correspondiente si no existe
             mkdir -p /home/reta/${{ steps.env.outputs.dir }}
             cd /home/reta/${{ steps.env.outputs.dir }}
             
-            # 2. Si no es un repositorio válido, limpiar y clonar bien
+            # Inicializar o clonar si el repositorio no está listo
             if [ ! -d ".git" ]; then
-              echo "Repositorio no inicializado. Limpiando y clonando..."
+              echo "Inicializando repositorio en: ${{ steps.env.outputs.dir }}"
               cd ..
               rm -rf ${{ steps.env.outputs.dir }}
               git clone https://github.com/RETA93/proyecto-web.git ${{ steps.env.outputs.dir }}
               cd ${{ steps.env.outputs.dir }}
             fi
             
-            # 3. Sincronizar la rama activa
+            # Sincronizar código de la rama actual
             git config pull.rebase false
             git fetch origin
             git checkout ${{ github.ref_name }}
             git reset --hard origin/${{ github.ref_name }}
             git pull origin ${{ github.ref_name }}
             
-            # 4. Levantar Docker
+            # Levantar con Docker Compose mapeando el archivo .env correspondiente
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} down --remove-orphans
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d mysql
             sleep 20
