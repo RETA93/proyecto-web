@@ -10,11 +10,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # --- OPTIMIZACIÓN PYTHON + CACHÉ ---
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: 'pip' # Almacena en caché los paquetes descargados
+          cache: 'pip'
           cache-dependency-path: backend-python/requirements.txt
       - name: Instalar dependencias Python
         run: pip install -r backend-python/requirements.txt
@@ -23,41 +22,23 @@ jobs:
           cd backend-python
           python -m pytest || echo "Sin tests todavía"
 
-      # --- OPTIMIZACIÓN GO + CACHÉ ---
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23"
-          cache: true # Habilita la caché nativa de módulos y compilación de Go
+          cache: true
           cache-dependency-path: backend-go/go.sum
       - name: Ejecutar tests Go
         run: |
           cd backend-go
           go test ./... || echo "Sin tests todavía"
 
-  deploy-and-promote:
+  # --- DESPLIEGUE EN DESARROLLO (AUTOMÁTICO) ---
+  deploy-dev:
     needs: test
+    if: github.ref_name == 'develop'
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'main' && 'prod' || (github.ref_name == 'qa' && 'qa' || 'dev') }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Determinar entorno
-        id: env
-        run: |
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            echo "name=prod" >> "$GITHUB_OUTPUT"
-            echo "dir=proyecto-web-prod" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.ref_name }}" = "qa" ]; then
-            echo "name=qa" >> "$GITHUB_OUTPUT"
-            echo "dir=proyecto-web-qa" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=dev" >> "$GITHUB_OUTPUT"
-            echo "dir=proyecto-web" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Configurar Cloudflare Tunnel y SSH
         run: |
           sudo mkdir -p /usr/local/bin
@@ -72,44 +53,109 @@ jobs:
           echo "  StrictHostKeyChecking no" >> ~/.ssh/config
           echo "$REAL_HOST" > ~/.ssh/target_host_clean
 
-      - name: Desplegar en Servidor Local por SSH
+      - name: Desplegar en Servidor (Dev)
         env:
           TARGET_USER: ${{ secrets.SERVER_USER }}
         run: |
           TARGET_HOST=$(cat ~/.ssh/target_host_clean)
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -i ~/.ssh/id_ed25519 "$TARGET_USER@$TARGET_HOST" << 'EOF'
-            cd /home/reta/${{ steps.env.outputs.dir }}
+            cd /home/reta/proyecto-web
             git config pull.rebase false
-            git reset --hard origin/${{ github.ref_name }}
-            git pull origin ${{ github.ref_name }}
-            
-            # 1. Apagar por completo el entorno correspondiente de forma limpia
-            docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} down --remove-orphans
-            
-            # 2. Levantar la Base de Datos primero pasándole explícitamente el archivo de variables
-            docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d mysql
-            
-            # 3. Dar tiempo de gracia nativo para inicializar archivos sin saturar el SSH
-            echo "Dando 20 segundos para que MySQL levante el almacenamiento local..."
+            git reset --hard origin/develop
+            git pull origin develop
+            docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.dev down --remove-orphans
+            docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.dev up -d mysql
             sleep 20
-            
-            # 4. Levantar el resto de la aplicación compilando cambios de forma segura
-            docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d --build
+            docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.dev up -d --build
           EOF
 
-      - name: Promocionar Rama Automaticamente (Merge)
-        if: success() && (github.ref_name == 'develop' || github.ref_name == 'qa')
+      - name: Promocionar Automáticamente a QA
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          if [ "${{ github.ref_name }}" = "develop" ]; then
-            TARGET_BRANCH="qa"
-          elif [ "${{ github.ref_name }}" = "qa" ]; then
-            TARGET_BRANCH="main"
-          fi
-          
-          echo "Haciendo merge automático de ${{ github.ref_name }} hacia $TARGET_BRANCH..."
-          git checkout $TARGET_BRANCH
-          git merge origin/${{ github.ref_name }} --no-ff -m "ci: merge automático de promocion desde ${{ github.ref_name }}"
-          git push origin $TARGET_BRANCH
+          git checkout qa
+          git merge origin/develop --no-ff -m "ci: merge automático de develop a qa"
+          git push origin qa
+
+  # --- DESPLIEGUE EN QA (AUTOMÁTICO DESDE DEVELOP) ---
+  deploy-qa:
+    needs: test
+    if: github.ref_name == 'qa'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurar Cloudflare Tunnel y SSH
+        run: |
+          sudo mkdir -p /usr/local/bin
+          sudo curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+          sudo chmod +x /usr/local/bin/cloudflared
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          REAL_HOST=$(echo "${{ secrets.SERVER_HOST }}" | base64 --decode 2>/dev/null || echo "${{ secrets.SERVER_HOST }}")
+          echo "Host $REAL_HOST" >> ~/.ssh/config
+          echo "  ProxyCommand /usr/local/bin/cloudflared access ssh --hostname %h" >> ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+          echo "$REAL_HOST" > ~/.ssh/target_host_clean
+
+      - name: Desplegar en Servidor (QA)
+        env:
+          TARGET_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          TARGET_HOST=$(cat ~/.ssh/target_host_clean)
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -i ~/.ssh/id_ed25519 "$TARGET_USER@$TARGET_HOST" << 'EOF'
+            cd /home/reta/proyecto-web-qa
+            git config pull.rebase false
+            git reset --hard origin/qa
+            git pull origin qa
+            docker compose -f docker-compose.yml -f docker-compose.qa.yml --env-file .env.qa down --remove-orphans
+            docker compose -f docker-compose.yml -f docker-compose.qa.yml --env-file .env.qa up -d mysql
+            sleep 20
+            docker compose -f docker-compose.yml -f docker-compose.qa.yml --env-file .env.qa up -d --build
+          EOF
+
+      - name: Promocionar Automáticamente a Main (Aquí disparará la protección)
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          git merge origin/qa --no-ff -m "ci: merge automático de qa a main"
+          git push origin main
+
+  # --- DESPLIEGUE EN PRODUCCIÓN (REQUERIRÁ TU APROBACIÓN EN LA WEB) ---
+  deploy-prod:
+    needs: test
+    if: github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    environment: prod # <--- ESTO ENLAZA CON LA WEB DE GITHUB
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurar Cloudflare Tunnel y SSH
+        run: |
+          sudo mkdir -p /usr/local/bin
+          sudo curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+          sudo chmod +x /usr/local/bin/cloudflared
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          REAL_HOST=$(echo "${{ secrets.SERVER_HOST }}" | base64 --decode 2>/dev/null || echo "${{ secrets.SERVER_HOST }}")
+          echo "Host $REAL_HOST" >> ~/.ssh/config
+          echo "  ProxyCommand /usr/local/bin/cloudflared access ssh --hostname %h" >> ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+          echo "$REAL_HOST" > ~/.ssh/target_host_clean
+
+      - name: Desplegar en Servidor (Prod)
+        env:
+          TARGET_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          TARGET_HOST=$(cat ~/.ssh/target_host_clean)
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -i ~/.ssh/id_ed25519 "$TARGET_USER@$TARGET_HOST" << 'EOF'
+            cd /home/reta/proyecto-web-prod
+            git config pull.rebase false
+            git reset --hard origin/main
+            git pull origin main
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod down --remove-orphans
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up -d mysql
+            sleep 20
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up -d --build
+          EOF
