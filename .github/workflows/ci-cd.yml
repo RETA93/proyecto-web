@@ -77,34 +77,23 @@ jobs:
           TARGET_USER: ${{ secrets.SERVER_USER }}
         run: |
           TARGET_HOST=$(cat ~/.ssh/target_host_clean)
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 "$TARGET_USER@$TARGET_HOST" << 'EOF'
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -i ~/.ssh/id_ed25519 "$TARGET_USER@$TARGET_HOST" << 'EOF'
             cd /home/reta/${{ steps.env.outputs.dir }}
             git config pull.rebase false
             git reset --hard origin/${{ github.ref_name }}
             git pull origin ${{ github.ref_name }}
             
-            # Limpieza forzada de contenedores huérfanos anteriores
-            docker rm -f frontend-dev backend-python-dev backend-go-dev nginx-dev mysql-dev frontend-qa backend-python-qa backend-go-qa nginx-qa mysql-qa 2>/dev/null || true
-            
-            # Apagar el entorno actual limpiando huérfanos
+            # 1. Apagar por completo el entorno correspondiente de forma limpia
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} down --remove-orphans
             
-            # Levantar únicamente mysql
+            # 2. Levantar la Base de Datos primero pasándole explícitamente el archivo de variables
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d mysql
             
-            # CORRECCIÓN DE WAIT: Bucle dinámico que espera hasta que el healthcheck sea realmente 'healthy'
-            echo "Esperando a que MySQL inicie de forma saludable..."
-            for i in {1..30}; do
-              STATUS=$(docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml ps mysql --format json | grep -o '"HealthStatus":"[^"]*"' | cut -d'"' -f4)
-              if [ "$STATUS" = "healthy" ]; then
-                echo "¡MySQL está listo y saludable!"
-                break
-              fi
-              echo "Atenuando... MySQL sigue cargando (Intento $i/30)"
-              sleep 3
-            done
+            # 3. Dar tiempo de gracia nativo para inicializar archivos sin saturar el SSH
+            echo "Dando 20 segundos para que MySQL levante el almacenamiento local..."
+            sleep 20
             
-            # Levantar el resto de los servicios compilando cambios
+            # 4. Levantar el resto de la aplicación compilando cambios de forma segura
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d --build
           EOF
 
