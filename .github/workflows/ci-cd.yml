@@ -49,6 +49,9 @@ jobs:
           elif [ "${{ github.ref_name }}" = "qa" ]; then
             echo "name=qa" >> "$GITHUB_OUTPUT"
             echo "dir=proyecto-web-qa" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref_name }}" = "develop" ]; then
+            echo "name=dev" >> "$GITHUB_OUTPUT"
+            echo "dir=proyecto-web" >> "$GITHUB_OUTPUT"
           else
             echo "name=dev" >> "$GITHUB_OUTPUT"
             echo "dir=proyecto-web" >> "$GITHUB_OUTPUT"
@@ -74,25 +77,27 @@ jobs:
         run: |
           TARGET_HOST=$(cat ~/.ssh/target_host_clean)
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -i ~/.ssh/id_ed25519 "$TARGET_USER@$TARGET_HOST" << 'EOF'
-            # 1. Moverse a la carpeta dinámica calculada por GitHub Actions
+            # 1. Crear la carpeta si no existe y moverse a ella
+            mkdir -p /home/reta/${{ steps.env.outputs.dir }}
             cd /home/reta/${{ steps.env.outputs.dir }}
             
-            # 2. Si la carpeta está vacía (como pasa en QA o Prod la primera vez), clonar el repositorio
+            # 2. Si no es un repositorio válido, limpiar y clonar bien
             if [ ! -d ".git" ]; then
-              echo "Carpeta vacía, clonando repositorio por primera vez..."
+              echo "Repositorio no inicializado. Limpiando y clonando..."
               cd ..
+              rm -rf ${{ steps.env.outputs.dir }}
               git clone https://github.com/RETA93/proyecto-web.git ${{ steps.env.outputs.dir }}
               cd ${{ steps.env.outputs.dir }}
             fi
             
-            # 3. Traer los cambios limpios de la rama correspondiente
+            # 3. Sincronizar la rama activa
             git config pull.rebase false
             git fetch origin
             git checkout ${{ github.ref_name }}
             git reset --hard origin/${{ github.ref_name }}
             git pull origin ${{ github.ref_name }}
             
-            # 4. Detener y reconstruir el entorno específico
+            # 4. Levantar Docker
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} down --remove-orphans
             docker compose -f docker-compose.yml -f docker-compose.${{ steps.env.outputs.name }}.yml --env-file .env.${{ steps.env.outputs.name }} up -d mysql
             sleep 20
