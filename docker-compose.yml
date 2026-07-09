@@ -75,7 +75,7 @@ services:
     container_name: nginx-${ENV_NAME:-dev}
     restart: unless-stopped
     ports:
-      - "8091:80"
+      - "${NGINX_PORT:-8090}:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
